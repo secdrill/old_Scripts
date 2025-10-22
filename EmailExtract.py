@@ -1,5 +1,4 @@
 # I only added few logic rest of the script is from AI
-
 import os
 import re
 import base64
@@ -67,42 +66,49 @@ def extract_urls_from_pdf(pdf_path: Path) -> list:
     return list(urls)
 
 def extract_attachments(email_message, destination: Path) -> list:
-    """Extract attachments from email and save to destination."""
+    """Extract attachments from email and save to destination (including inline attachments)."""
     attachments_info = []
     email_subject = email_message.get('Subject') or 'no_subject'
     basepath = destination / sanitize_foldername(email_subject)
     basepath.mkdir(exist_ok=True, parents=True)
 
-    attachments = [item for item in email_message.iter_attachments() if item.is_attachment()]
-    if not attachments:
-        print('>> No attachments found.')
-        return attachments_info
+    for part in email_message.walk():
+        if part.is_multipart():
+            continue  # Skip multipart containers
 
-    for attachment in attachments:
-        filename = attachment.get_filename() or 'attachment'
-        safe_filename = sanitize_foldername(filename)
-        filepath = basepath / safe_filename
-        payload = attachment.get_payload(decode=True)
-        if payload:
-            md5 = hashlib.md5(payload).hexdigest()
-            sha256 = hashlib.sha256(payload).hexdigest()
-            content_type = attachment.get_content_type()
-            attachments_info.append({
-                'filename': safe_filename,
-                'content_type': content_type,
-                'size': len(payload),
-                'md5': md5,
-                'sha256': sha256,
-                'is_image': content_type.startswith('image/'),
-                'filepath': filepath
-            })
-            if filepath.exists():
-                print(f'>> The file "{safe_filename}" already exists! Skipping...')
-            else:
-                save_attachment(filepath, payload)
-                if content_type == 'application/pdf':
-                    pdf_urls = extract_urls_from_pdf(filepath)
-                    attachments_info[-1]['pdf_urls'] = pdf_urls
+        content_disposition = part.get("Content-Disposition", "")
+        filename = part.get_filename()
+
+        # Process any part that has a filename or a content disposition indicating it's an attachment
+        if filename or "attachment" in content_disposition or "inline" in content_disposition:
+            filename = filename or 'attachment'
+            safe_filename = sanitize_foldername(filename)
+            filepath = basepath / safe_filename
+            payload = part.get_payload(decode=True)
+
+            if payload:
+                md5 = hashlib.md5(payload).hexdigest()
+                sha256 = hashlib.sha256(payload).hexdigest()
+                content_type = part.get_content_type()
+
+                attachments_info.append({
+                    'filename': safe_filename,
+                    'content_type': content_type,
+                    'size': len(payload),
+                    'md5': md5,
+                    'sha256': sha256,
+                    'is_image': content_type.startswith('image/'),
+                    'filepath': filepath
+                })
+
+                if filepath.exists():
+                    print(f'>> The file "{safe_filename}" already exists! Skipping...')
+                else:
+                    save_attachment(filepath, payload)
+
+                    if content_type == 'application/pdf':
+                        pdf_urls = extract_urls_from_pdf(filepath)
+                        attachments_info[-1]['pdf_urls'] = pdf_urls
 
     return attachments_info
 
